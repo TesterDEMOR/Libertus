@@ -6,6 +6,7 @@
 // --- Bundled imports (offline via Vite) ---
 import './style.css';
 import '@khmyznikov/pwa-install';
+import { FilesetResolver, LlmInference } from '@mediapipe/tasks-genai';
 
 // ============================================================
 //  CONFIG
@@ -13,8 +14,8 @@ import '@khmyznikov/pwa-install';
 // Dev: use local file from project root; Prod: download from HuggingFace
 const MODEL_URL = import.meta.env.DEV
   ? '/LibertusBrain.litertlm'
-  : 'https://huggingface.co/nicknaskida/gemma-3n-E2B-it-int4-Web/resolve/main/gemma-3n-E2B-it-int4-Web.litertlm';
-const WASM_CDN  = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-genai@latest/wasm';
+  : 'https://huggingface.co/dwwdaad2/LibertusTest/resolve/main/LibertusBrain.litertlm';
+const WASM_PATH = './wasm';
 
 const DB_NAME     = 'libertus-db';
 const DB_VERSION  = 2;           // v2: chunked storage (v1 had single 'blobs' store)
@@ -351,13 +352,8 @@ async function initLLM(meta) {
   sDetail.textContent = 'Loading WASM runtime...';
   sBar.style.width = '60%';
 
-  // Dynamic import from CDN — MediaPipe can't be bundled (WASM + workers)
-  const { FilesetResolver, LlmInference } = await import(
-    /* @vite-ignore */
-    'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-genai@latest'
-  );
-
-  const genai = await FilesetResolver.forGenAiTasks(WASM_CDN);
+  // MediaPipe JS is bundled via npm, WASM files served from ./wasm/
+  const genai = await FilesetResolver.forGenAiTasks(WASM_PATH);
 
   sDetail.textContent = 'Loading model into GPU memory (this may take a minute)...';
   sBar.style.width = '75%';

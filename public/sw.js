@@ -4,18 +4,22 @@
 //  This file lives in public/ and is NOT bundled by Vite
 // ============================================================
 
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.1.0';
 const CACHE_NAME = `libertus-v${APP_VERSION}`;
 
-// Files to precache (the single index.html + manifest + favicon)
+// Files to precache — app shell + WASM (fully offline, no CDN)
 const PRECACHE = [
   './',
   './index.html',
   './manifest.json',
   './favicon.svg',
+  './wasm/genai_wasm_internal.js',
+  './wasm/genai_wasm_internal.wasm',
+  './wasm/genai_wasm_nosimd_internal.js',
+  './wasm/genai_wasm_nosimd_internal.wasm',
 ];
 
-// Install: precache app shell
+// Install: precache app shell + WASM
 self.addEventListener('install', (event) => {
   self.skipWaiting();
   event.waitUntil(
@@ -38,8 +42,7 @@ self.addEventListener('activate', (event) => {
 
 // Fetch strategy:
 // - Model files (.litertlm) and HuggingFace: pass through (handled by app + IndexedDB)
-// - CDN (jsdelivr): cache first, then network (WASM files for MediaPipe)
-// - App shell: cache first, then network fallback
+// - Everything else: cache first, then network fallback (fully offline)
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
@@ -58,17 +61,6 @@ self.addEventListener('fetch', (event) => {
       return fetch(event.request)
         .then((response) => {
           if (!response || response.status !== 200) return response;
-
-          // Cache CDN resources (MediaPipe WASM)
-          const shouldCache =
-            url.hostname === 'cdn.jsdelivr.net' ||
-            url.hostname === 'unpkg.com';
-
-          if (shouldCache) {
-            const clone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-          }
-
           return response;
         })
         .catch(() => {
