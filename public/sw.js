@@ -4,7 +4,7 @@
 //  This file lives in public/ and is NOT bundled by Vite
 // ============================================================
 
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.3.0';
 const CACHE_NAME = `libertus-v${APP_VERSION}`;
 
 // Files to precache — app shell + WASM (fully offline, no CDN)
