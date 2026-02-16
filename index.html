@@ -32,7 +32,11 @@
     <div class="progress-wrap"><div id="s-bar" class="progress-bar"></div></div>
     <div id="s-detail" class="setup-detail"></div>
     <div id="s-error" class="setup-error"></div>
-    <button class="setup-btn" id="s-load-file" style="display:none">Load model from device</button>
+    <div id="s-alt-btns" class="setup-alt-btns" style="display:none">
+      <div class="setup-alt-divider">or download manually:</div>
+      <button class="setup-btn" id="s-direct-dl">1. Download model file (~3 GB)</button>
+      <button class="setup-btn" id="s-load-file">2. Load downloaded file</button>
+    </div>
     <div class="setup-warn">Model is cached for offline use. ~3 GB download. All processing stays on your device.</div>
   </div>
 

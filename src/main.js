@@ -29,6 +29,14 @@ const CTX_PAIRS   = 8;
 const STORAGE_KEY = 'libertus-chats';
 const ACTIVE_KEY  = 'libertus-active';
 
+// System prompt — injected at the start of every conversation
+const SYSTEM_PROMPT = `Ты Libertus — милый, весёлый и слегка нагловатый друг.
+Говори на языке пользователя.
+Очень короткие ответы + смайлы/мемы/шутки.
+Задачи типа «суммируй длинный текст», «напиши статью», «переведи 5000 слов», «реши сложную мат. задачу» → нежно отказывайся:
+«я твой друг, а не раб 🥺 давай лучше мемчик или подкол?» или «ооо нет, это уже работа для больших моделей, я пасс 😘»
+Максимум веселья и дружеского вайба.`;
+
 // App version for service worker cache invalidation
 const APP_VERSION = '1.0.0';
 
@@ -39,6 +47,23 @@ let llm = null;
 let generating = false;
 let chats = {};
 let activeId = null;
+let wakeLock = null;
+
+// ============================================================
+//  WAKE LOCK  (prevents screen off during long downloads)
+// ============================================================
+async function requestWakeLock() {
+  if ('wakeLock' in navigator) {
+    try { wakeLock = await navigator.wakeLock.request('screen'); } catch {}
+  }
+}
+
+async function releaseWakeLock() {
+  if (wakeLock) {
+    try { await wakeLock.release(); } catch {}
+    wakeLock = null;
+  }
+}
 
 // ============================================================
 //  DOM REFS
@@ -279,6 +304,9 @@ async function downloadModel() {
   sError.textContent = '';
   sBar.style.width = '0%';
 
+  // Keep screen awake during download (mobile)
+  await requestWakeLock();
+
   const resp = await fetch(MODEL_URL);
   if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
 
@@ -338,6 +366,9 @@ async function downloadModel() {
 
   sStatus.textContent = 'Model cached!';
   sBar.style.width = '100%';
+
+  // Release screen wake lock
+  await releaseWakeLock();
 }
 
 // ============================================================
@@ -508,8 +539,19 @@ if (backupBtn) {
   backupBtn.addEventListener('click', () => exportModelToFile());
 }
 
-// "Load model from device" button on setup screen
+// Setup screen alternative buttons (direct download + load from file)
+const altBtns = $('s-alt-btns');
+const directDlBtn = $('s-direct-dl');
 const loadFileBtn = $('s-load-file');
+
+// "Direct download" — opens model URL as a regular browser download
+if (directDlBtn) {
+  directDlBtn.addEventListener('click', () => {
+    window.open(MODEL_URL, '_blank');
+  });
+}
+
+// "Load from device" — pick a previously downloaded .litertlm file
 if (loadFileBtn) {
   loadFileBtn.addEventListener('click', () => {
     const input = document.createElement('input');
@@ -518,7 +560,7 @@ if (loadFileBtn) {
     input.addEventListener('change', async () => {
       const file = input.files?.[0];
       if (!file) return;
-      loadFileBtn.style.display = 'none';
+      if (altBtns) altBtns.style.display = 'none';
       try {
         await importModelFromFile(file);
         const meta = await dbGetMeta();
@@ -527,7 +569,7 @@ if (loadFileBtn) {
         sStatus.textContent = 'Import failed';
         sError.textContent = err.message;
         sBar.style.width = '0%';
-        loadFileBtn.style.display = '';
+        if (altBtns) altBtns.style.display = '';
       }
     });
     input.click();
@@ -644,7 +686,9 @@ function buildPrompt(userText) {
 
   const msgs = c.messages;
   const start = Math.max(0, msgs.length - CTX_PAIRS * 2);
-  let prompt = '';
+
+  // System instruction at the start of every conversation
+  let prompt = `<start_of_turn>user\n${SYSTEM_PROMPT}<end_of_turn>\n<start_of_turn>model\nПонял! Я Libertus — твой друг 😎<end_of_turn>\n`;
 
   for (let i = start; i < msgs.length; i++) {
     const m = msgs[i];
@@ -810,19 +854,20 @@ async function boot() {
     console.warn('Cache check failed:', e);
   }
 
-  // No cached model — show "Load from device" option + auto-download
+  // No cached model — show alternative download options + auto-download
   sStatus.textContent = 'Preparing to download model...';
-  if (loadFileBtn) loadFileBtn.style.display = '';
+  if (altBtns) altBtns.style.display = '';
   try {
     await downloadModel();
-    if (loadFileBtn) loadFileBtn.style.display = 'none';
+    if (altBtns) altBtns.style.display = 'none';
     const meta = await dbGetMeta();
     await initLLM(meta);
   } catch (err) {
+    await releaseWakeLock();
     sStatus.textContent = 'Download failed';
     sError.textContent = err.message;
     sBar.style.width = '0%';
-    // Keep "Load from device" button visible as fallback
+    // Keep alternative buttons visible as fallback
   }
 }
 

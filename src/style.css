@@ -181,6 +181,22 @@ input, textarea {
 }
 .setup-btn:active { background: var(--accent2); }
 
+.setup-alt-btns {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  width: 100%;
+  max-width: 340px;
+}
+
+.setup-alt-divider {
+  font-size: 11px;
+  color: var(--fg3);
+  margin-top: 8px;
+}
+
 /* ---- App layout ---- */
 #app {
   display: flex;
