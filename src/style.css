@@ -1,8 +1,3 @@
-/* ============================================================
-   Libertus — Styles
-   Mobile-first, dark theme, safe-area aware
-   ============================================================ */
-
 *, *::before, *::after {
   margin: 0;
   padding: 0;
@@ -61,12 +56,10 @@ input, textarea {
   outline: none;
 }
 
-/* Scrollbar */
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--bg4); border-radius: 4px; }
 
-/* ---- WebGPU warning ---- */
 .no-gpu {
   position: fixed; inset: 0; z-index: 9999;
   background: var(--bg);
@@ -82,7 +75,6 @@ input, textarea {
 .no-gpu p { font-size: 14px; color: var(--fg2); max-width: 320px; line-height: 1.6; margin-bottom: 8px; }
 .no-gpu-hint { font-size: 12px; color: var(--fg3); margin-top: 12px; }
 
-/* ---- Setup screen ---- */
 #setup-screen {
   position: fixed; inset: 0; z-index: 50;
   background: var(--bg);
@@ -205,7 +197,6 @@ input, textarea {
   margin-top: 8px;
 }
 
-/* ---- App layout ---- */
 #app {
   display: flex;
   flex-direction: column;
@@ -215,7 +206,6 @@ input, textarea {
 }
 #app.visible { opacity: 1; }
 
-/* ---- Header ---- */
 .header {
   height: calc(56px + var(--safe-top));
   padding-top: var(--safe-top);
@@ -249,7 +239,6 @@ input, textarea {
   text-overflow: ellipsis;
 }
 
-/* ---- Sidebar ---- */
 .sidebar-overlay {
   position: fixed; inset: 0; z-index: 20;
   background: rgba(0, 0, 0, 0.5);
@@ -362,7 +351,6 @@ input, textarea {
 }
 .sb-reset:active { opacity: 0.7; }
 
-/* ---- Messages ---- */
 .messages {
   flex: 1;
   overflow-y: auto;
@@ -457,7 +445,6 @@ input, textarea {
   box-shadow: 0 0 12px rgba(99, 102, 241, 0.15);
 }
 
-/* Typing indicator */
 .typing span {
   width: 6px; height: 6px;
   background: var(--fg3);
@@ -474,7 +461,6 @@ input, textarea {
   40% { opacity: 1; }
 }
 
-/* ---- Empty state ---- */
 .empty {
   display: flex;
   flex-direction: column;
@@ -512,7 +498,6 @@ input, textarea {
   color: var(--fg3);
 }
 
-/* ---- Input bar ---- */
 .input-bar {
   position: fixed;
   left: 0; right: 0; bottom: 0;
@@ -587,7 +572,6 @@ input, textarea {
 }
 .stop-btn:active { transform: scale(0.9); }
 
-/* ---- Context bar ---- */
 .ctx-bar {
   display: flex;
   align-items: center;
@@ -606,7 +590,6 @@ input, textarea {
 .ctx-dot.y { background: var(--yellow); }
 .ctx-dot.r { background: var(--red); }
 
-/* ---- pwa-install overrides ---- */
 pwa-install {
   --install-focus-color: var(--accent);
 }

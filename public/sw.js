@@ -1,13 +1,6 @@
-// ============================================================
-//  Libertus — Service Worker
-//  Version-based cache invalidation for PWA updates
-//  This file lives in public/ and is NOT bundled by Vite
-// ============================================================
-
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.4.0';
 const CACHE_NAME = `libertus-v${APP_VERSION}`;
 
-// Files to precache — app shell + WASM (fully offline, no CDN)
 const PRECACHE = [
   './',
   './index.html',
@@ -19,7 +12,6 @@ const PRECACHE = [
   './wasm/genai_wasm_nosimd_internal.wasm',
 ];
 
-// Install: precache app shell + WASM
 self.addEventListener('install', (event) => {
   self.skipWaiting();
   event.waitUntil(
@@ -27,7 +19,6 @@ self.addEventListener('install', (event) => {
   );
 });
 
-// Activate: delete ALL old versioned caches
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
@@ -40,18 +31,13 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Fetch strategy:
-// - Model files (.litertlm) and HuggingFace: pass through (handled by app + IndexedDB)
-// - Everything else: cache first, then network fallback (fully offline)
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // Don't intercept model downloads
   if (url.pathname.endsWith('.litertlm') || url.hostname === 'huggingface.co') {
     return;
   }
 
-  // Only handle GET requests
   if (event.request.method !== 'GET') return;
 
   event.respondWith(
@@ -64,7 +50,6 @@ self.addEventListener('fetch', (event) => {
           return response;
         })
         .catch(() => {
-          // Offline fallback for navigation
           if (event.request.mode === 'navigate') {
             return caches.match('./index.html');
           }

@@ -1,58 +1,43 @@
-/* ============================================================
-   Libertus — Main Application
-   Fully offline local LLM chat via MediaPipe + WebGPU
-   ============================================================ */
-
-// --- Bundled imports (offline via Vite) ---
 import './style.css';
 import '@khmyznikov/pwa-install';
 import { FilesetResolver, LlmInference } from '@mediapipe/tasks-genai';
 
-// ============================================================
-//  CONFIG
-// ============================================================
-// Dev: use local file from project root; Prod: download from HuggingFace
 const MODEL_URL = import.meta.env.DEV
   ? '/LibertusBrain.litertlm'
   : 'https://huggingface.co/dwwdaad2/LibertusTest/resolve/main/LibertusBrain.litertlm';
 const WASM_PATH = './wasm';
 
-const DB_NAME     = 'libertus-db';
-const DB_VERSION  = 2;           // v2: chunked storage (v1 had single 'blobs' store)
-const META_STORE  = 'meta';      // stores model metadata {totalSize, chunkCount, ...}
-const CHUNK_STORE = 'chunks';    // stores 64 MB Uint8Array slices, keyed by index
-const META_KEY    = 'model-meta';
-const CHUNK_SIZE  = 64 * 1024 * 1024;  // 64 MB — keeps peak RAM ~128 MB during download
+const DB_NAME = 'libertus-db';
+const DB_VERSION = 2;
+const META_STORE = 'meta';
+const CHUNK_STORE = 'chunks';
+const META_KEY = 'model-meta';
+const CHUNK_SIZE = 64 * 1024 * 1024;
 
-const MAX_TOKENS  = 1024;
-const CTX_PAIRS   = 20;
+const MAX_TOKENS = 1024;
+const CTX_PAIRS = 20;
 const STORAGE_KEY = 'libertus-chats';
-const ACTIVE_KEY  = 'libertus-active';
+const ACTIVE_KEY = 'libertus-active';
 
-// System prompt — injected at the start of every conversation
 const SYSTEM_PROMPT = `Ты Libertus — милый, весёлый и слегка нагловатый друг.
 Говори на языке пользователя.
 Очень короткие ответы + смайлы/мемы/шутки.
 Задачи типа «суммируй длинный текст», «напиши статью», «переведи 5000 слов», «реши сложную мат. задачу» → нежно отказывайся:
 «я твой друг, а не раб 🥺 давай лучше мемчик или подкол?» или «ооо нет, это уже работа для больших моделей, я пасс 😘»
 Если что-то забыл из разговора, говори: «Ой моя дурная башка, не могу же я все помнить)»
-Максимум веселья и дружеского вайба.`;
+Максимум веселья и дружеского вайба.
+твой автор и разработчик создатель Бер Максим который учится в казахстане в алматинской академии мвд,он очень рад что кто-то попробовал и протестировал проект над которым он так долго работал (ага долго)(ага работал) и маленькими буквами HELP ME`;
 
-// App version for service worker cache invalidation
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.4.0';
 
-// ============================================================
-//  STATE
-// ============================================================
 let llm = null;
 let generating = false;
 let chats = {};
 let activeId = null;
 let wakeLock = null;
+let downloadController = null;
+let isDownloading = false;
 
-// ============================================================
-//  WAKE LOCK  (prevents screen off during long downloads)
-// ============================================================
 async function requestWakeLock() {
   if ('wakeLock' in navigator) {
     try { wakeLock = await navigator.wakeLock.request('screen'); } catch {}
@@ -66,43 +51,33 @@ async function releaseWakeLock() {
   }
 }
 
-// ============================================================
-//  DOM REFS
-// ============================================================
 const $ = (id) => document.getElementById(id);
 
-const setupEl    = $('setup-screen');
-const sStatus    = $('s-status');
-const sBar       = $('s-bar');
-const sDetail    = $('s-detail');
-const sError     = $('s-error');
-const appEl      = $('app');
-const msgsEl     = $('messages');
-const emptyEl    = $('empty-state');
-const inputEl    = $('user-input');
-const sendBtn    = $('send-btn');
-const hdrTitle   = $('hdr-title');
-const sbChats    = $('sb-chats');
-const sbEl       = $('sb');
-const sbOverlay  = $('sb-overlay');
-const modelInfo  = $('model-info');
-const ctxBar     = $('ctx-bar');
-const ctxDot     = $('ctx-dot');
-const ctxText    = $('ctx-text');
-const noGpu      = $('no-gpu');
+const setupEl = $('setup-screen');
+const sStatus = $('s-status');
+const sBar = $('s-bar');
+const sDetail = $('s-detail');
+const sError = $('s-error');
+const appEl = $('app');
+const msgsEl = $('messages');
+const emptyEl = $('empty-state');
+const inputEl = $('user-input');
+const sendBtn = $('send-btn');
+const hdrTitle = $('hdr-title');
+const sbChats = $('sb-chats');
+const sbEl = $('sb');
+const sbOverlay = $('sb-overlay');
+const modelInfo = $('model-info');
+const ctxBar = $('ctx-bar');
+const ctxDot = $('ctx-dot');
+const ctxText = $('ctx-text');
+const noGpu = $('no-gpu');
 
-// ============================================================
-//  INDEXED DB  (chunked model storage — 64 MB slices)
-//  DB v2 layout:
-//    META_STORE  – single key 'model-meta' → {totalSize, chunkCount, chunkSize, complete}
-//    CHUNK_STORE – keys 0..N-1              → Uint8Array (each ≤ 64 MB)
-// ============================================================
 function openDB() {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = (e) => {
       const db = req.result;
-      // Migrate from v1 (single 'blobs' store holding the entire 3 GB buffer)
       if (db.objectStoreNames.contains('blobs')) {
         db.deleteObjectStore('blobs');
       }
@@ -158,31 +133,26 @@ async function dbGetChunk(index) {
   });
 }
 
-/** Wipe entire database (model + meta). Used by "Reset model cache" button. */
 async function dbDeleteAll() {
   return new Promise((resolve, reject) => {
     const req = indexedDB.deleteDatabase(DB_NAME);
     req.onsuccess = () => resolve();
     req.onerror = () => reject(req.error);
-    req.onblocked = () => resolve(); // may fire if another tab has DB open
+    req.onblocked = () => resolve();
   });
 }
 
-// ============================================================
-//  FILE-BASED MODEL IMPORT / EXPORT  (fallback for evicted cache)
-//
-//  Load: uses hidden <input type="file"> (works everywhere, even
-//        mobile). Reads File in 64 MB slices into IDB chunks.
-//  Save: uses showSaveFilePicker() (Chrome/Edge desktop) or
-//        falls back gracefully if API is absent.
-//  Both stream 64 MB at a time — never 3 GB in RAM.
-// ============================================================
-
-/** Import model from a local .litertlm file → chunked IDB */
 async function importModelFromFile(file) {
+  if (isDownloading && downloadController) {
+    downloadController.abort();
+    isDownloading = false;
+    await releaseWakeLock();
+  }
+
   sStatus.textContent = 'Importing model from file...';
   sError.textContent = '';
   sBar.style.width = '0%';
+  if (altBtns) altBtns.style.display = 'none';
 
   const total = file.size;
   let offset = 0;
@@ -213,7 +183,6 @@ async function importModelFromFile(file) {
   sBar.style.width = '100%';
 }
 
-/** Export model from IDB → user's filesystem (showSaveFilePicker) */
 async function exportModelToFile() {
   const meta = await dbGetMeta();
   if (!meta || !meta.complete) {
@@ -253,9 +222,6 @@ async function exportModelToFile() {
   }
 }
 
-// ============================================================
-//  WEBGPU CHECK
-// ============================================================
 async function gpuOk() {
   if (!navigator.gpu) return false;
   try {
@@ -266,21 +232,14 @@ async function gpuOk() {
   }
 }
 
-// ============================================================
-//  SERVICE WORKER REGISTRATION
-// ============================================================
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js').then((reg) => {
-    // Check for updates periodically
-    setInterval(() => reg.update(), 60 * 60 * 1000); // every hour
-
-    // Listen for new service worker
+    setInterval(() => reg.update(), 60 * 60 * 1000);
     reg.addEventListener('updatefound', () => {
       const newSW = reg.installing;
       if (!newSW) return;
       newSW.addEventListener('statechange', () => {
         if (newSW.state === 'activated') {
-          // New version ready — reload to apply
           if (confirm('New version available! Reload?')) {
             location.reload();
           }
@@ -290,36 +249,33 @@ if ('serviceWorker' in navigator) {
   }).catch(() => {});
 }
 
-// ============================================================
-//  MODEL DOWNLOAD  (chunked — peak RAM ~128 MB)
-//
-//  Streams from network into a 64 MB buffer. Each time the
-//  buffer fills, it is flushed to IndexedDB as a numbered chunk.
-//  Meta record is written only after ALL chunks are saved,
-//  guaranteeing atomicity: if download fails mid-way, meta
-//  will be absent and the next boot will re-download.
-// ============================================================
 async function downloadModel() {
+  isDownloading = true;
+  downloadController = new AbortController();
+
   sStatus.textContent = 'Downloading model...';
   sDetail.textContent = 'Connecting to server...';
   sError.textContent = '';
   sBar.style.width = '0%';
 
-  // Keep screen awake during download (mobile)
   await requestWakeLock();
 
-  const MAX_RETRIES = 100;   // generous for flaky mobile connections
-  const BASE_DELAY  = 2000;  // 2s initial retry delay
+  const MAX_RETRIES = 100;
+  const BASE_DELAY = 2000;
 
-  let received    = 0;
-  let total       = 0;
-  let chunkIndex  = 0;
-  let buffer      = new Uint8Array(CHUNK_SIZE);
+  let received = 0;
+  let total = 0;
+  let chunkIndex = 0;
+  let buffer = new Uint8Array(CHUNK_SIZE);
   let bufferOffset = 0;
-  let retries     = 0;
+  let retries = 0;
 
-  // Outer loop: each iteration is one fetch attempt (initial or resume)
   while (true) {
+    if (downloadController.signal.aborted) {
+        isDownloading = false;
+        throw new Error('Download aborted');
+    }
+
     try {
       const headers = {};
       if (received > 0) {
@@ -328,18 +284,14 @@ async function downloadModel() {
         sError.textContent = '';
       }
 
-      const resp = await fetch(MODEL_URL, { headers });
+      const resp = await fetch(MODEL_URL, { headers, signal: downloadController.signal });
 
       if (received === 0) {
-        // First request — get total size
         if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
         total = parseInt(resp.headers.get('Content-Length') || '0', 10);
       } else {
-        // Resume request
         if (resp.status === 206) {
-          // Partial content — server supports Range, continuing
         } else if (resp.status === 200) {
-          // Server doesn't support Range — restart from scratch
           received = 0;
           chunkIndex = 0;
           buffer = new Uint8Array(CHUNK_SIZE);
@@ -352,12 +304,10 @@ async function downloadModel() {
 
       const reader = resp.body.getReader();
 
-      // Inner loop: read stream chunks
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        // Copy network bytes into our fixed-size buffer, flushing when full
         let srcOffset = 0;
         while (srcOffset < value.length) {
           const space = CHUNK_SIZE - bufferOffset;
@@ -375,7 +325,7 @@ async function downloadModel() {
         }
 
         received += value.length;
-        retries = 0;  // reset retries on successful read
+        retries = 0;
 
         if (total > 0) {
           const pct = (received / total * 100).toFixed(1);
@@ -387,12 +337,17 @@ async function downloadModel() {
         }
       }
 
-      // Stream ended normally — download complete
       break;
 
     } catch (err) {
+      if (downloadController.signal.aborted || err.name === 'AbortError') {
+          isDownloading = false;
+          throw new Error('Download aborted');
+      }
+
       retries++;
       if (retries >= MAX_RETRIES) {
+        isDownloading = false;
         throw new Error(`Download failed after ${MAX_RETRIES} retries: ${err.message}`);
       }
 
@@ -406,13 +361,11 @@ async function downloadModel() {
     }
   }
 
-  // Flush remaining data as the final (possibly smaller) chunk
   if (bufferOffset > 0) {
     await dbPutChunk(chunkIndex, buffer.slice(0, bufferOffset));
     chunkIndex++;
   }
 
-  // Write meta record — this marks the download as complete
   await dbPutMeta({
     totalSize: received,
     chunkCount: chunkIndex,
@@ -420,32 +373,31 @@ async function downloadModel() {
     complete: true,
   });
 
+  isDownloading = false;
   sStatus.textContent = 'Model cached!';
   sBar.style.width = '100%';
 
-  // Release screen wake lock
   await releaseWakeLock();
 }
 
-// ============================================================
-//  INIT LLM (MediaPipe GenAI)  — streaming from IDB chunks
-//
-//  Creates a ReadableStream whose pull() reads one 64 MB chunk
-//  at a time from IndexedDB. MediaPipe consumes via getReader().
-//  The full 3 GB is NEVER assembled in memory.
-// ============================================================
 async function initLLM(meta) {
   sStatus.textContent = 'Initializing AI engine...';
   sDetail.textContent = 'Loading WASM runtime...';
   sBar.style.width = '60%';
 
-  // MediaPipe JS is bundled via npm, WASM files served from ./wasm/
   const genai = await FilesetResolver.forGenAiTasks(WASM_PATH);
 
-  sDetail.textContent = 'Loading model into GPU memory (this may take a minute)...';
-  sBar.style.width = '75%';
+  sDetail.textContent = 'Loading model into GPU memory...';
+  sBar.style.width = '70%';
 
-  // Pull-based stream: reads one IDB chunk per pull(), then releases it
+  let fakeProgress = 70;
+  const progressInterval = setInterval(() => {
+    fakeProgress += (Math.random() * 2);
+    if (fakeProgress > 95) fakeProgress = 95;
+    sBar.style.width = fakeProgress + '%';
+    sStatus.textContent = `Initializing... ${Math.floor(fakeProgress)}%`;
+  }, 200);
+
   let currentChunk = 0;
   const { chunkCount } = meta;
 
@@ -460,7 +412,6 @@ async function initLLM(meta) {
         controller.error(new Error(`Missing chunk ${currentChunk} in IndexedDB`));
         return;
       }
-      // Ensure we always enqueue a Uint8Array
       const bytes = data instanceof Uint8Array
         ? data
         : new Uint8Array(data instanceof ArrayBuffer ? data : data.buffer || data);
@@ -469,13 +420,17 @@ async function initLLM(meta) {
     },
   });
 
-  llm = await LlmInference.createFromOptions(genai, {
-    baseOptions: { modelAssetBuffer: stream.getReader() },
-    maxTokens: MAX_TOKENS,
-    topK: 40,
-    temperature: 0.8,
-    randomSeed: Math.floor(Math.random() * 100000),
-  });
+  try {
+    llm = await LlmInference.createFromOptions(genai, {
+        baseOptions: { modelAssetBuffer: stream.getReader() },
+        maxTokens: MAX_TOKENS,
+        topK: 40,
+        temperature: 0.8,
+        randomSeed: Math.floor(Math.random() * 100000),
+    });
+  } finally {
+    clearInterval(progressInterval);
+  }
 
   sBar.style.width = '100%';
   sStatus.textContent = 'Ready!';
@@ -489,9 +444,6 @@ async function initLLM(meta) {
   }, 400);
 }
 
-// ============================================================
-//  CHAT STORAGE (localStorage)
-// ============================================================
 function loadChats() {
   try {
     chats = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
@@ -511,9 +463,6 @@ function cur() {
   return chats[activeId] || null;
 }
 
-// ============================================================
-//  CHAT OPERATIONS
-// ============================================================
 function newChat(silent) {
   const id = 'c' + Date.now();
   chats[id] = { id, name: 'New Chat', messages: [], created: Date.now() };
@@ -553,9 +502,6 @@ function deleteChat(id, e) {
   updateCtx();
 }
 
-// ============================================================
-//  SIDEBAR
-// ============================================================
 function openSB() {
   sbEl.classList.add('open');
   sbOverlay.classList.add('open');
@@ -585,29 +531,24 @@ $('btn-reset').addEventListener('click', async () => {
   }
 });
 
-// Save model backup to device (sidebar button)
 const backupBtn = $('btn-backup');
 if (backupBtn) {
-  // Only show if showSaveFilePicker is available (Chrome/Edge desktop)
   if ('showSaveFilePicker' in window) {
     backupBtn.style.display = '';
   }
   backupBtn.addEventListener('click', () => exportModelToFile());
 }
 
-// Setup screen alternative buttons (direct download + load from file)
 const altBtns = $('s-alt-btns');
 const directDlBtn = $('s-direct-dl');
 const loadFileBtn = $('s-load-file');
 
-// "Direct download" — opens model URL as a regular browser download
 if (directDlBtn) {
   directDlBtn.addEventListener('click', () => {
     window.open(MODEL_URL, '_blank');
   });
 }
 
-// "Load from device" — pick a previously downloaded .litertlm file
 if (loadFileBtn) {
   loadFileBtn.addEventListener('click', () => {
     const input = document.createElement('input');
@@ -622,6 +563,7 @@ if (loadFileBtn) {
         const meta = await dbGetMeta();
         await initLLM(meta);
       } catch (err) {
+        if (err.message === 'Download aborted') return;
         sStatus.textContent = 'Import failed';
         sError.textContent = err.message;
         sBar.style.width = '0%';
@@ -663,9 +605,6 @@ function renderSB() {
   }
 }
 
-// ============================================================
-//  MESSAGES RENDERING
-// ============================================================
 function renderMsgs() {
   const c = cur();
   if (!c || !c.messages.length) {
@@ -695,7 +634,6 @@ function addMsg(role, text) {
   if (!c) return;
   c.messages.push({ role, text, ts: Date.now() });
 
-  // Auto-name chat from first user message
   if (role === 'user' && c.name === 'New Chat') {
     c.name = text.slice(0, 40) + (text.length > 40 ? '...' : '');
     hdrTitle.textContent = c.name;
@@ -733,9 +671,6 @@ function scroll() {
   });
 }
 
-// ============================================================
-//  CONTEXT WINDOW (Gemma prompt template)
-// ============================================================
 function buildPrompt(userText) {
   const c = cur();
   if (!c) return '';
@@ -743,7 +678,6 @@ function buildPrompt(userText) {
   const msgs = c.messages;
   const start = Math.max(0, msgs.length - CTX_PAIRS * 2);
 
-  // System instruction at the start of every conversation
   let prompt = `<start_of_turn>user\n${SYSTEM_PROMPT}<end_of_turn>\n<start_of_turn>model\nПонял! Я Libertus — твой друг 😎<end_of_turn>\n`;
 
   for (let i = start; i < msgs.length; i++) {
@@ -773,9 +707,6 @@ function updateCtx() {
     'ctx-dot ' + (total <= CTX_PAIRS ? 'g' : total <= CTX_PAIRS * 2 ? 'y' : 'r');
 }
 
-// ============================================================
-//  SEND / GENERATE
-// ============================================================
 async function send() {
   const text = inputEl.value.trim();
   if (!text || !llm || generating) return;
@@ -791,7 +722,6 @@ async function send() {
   generating = true;
   sendBtn.style.display = 'none';
 
-  // Show stop button
   const stopBtn = document.createElement('button');
   stopBtn.className = 'stop-btn';
   stopBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
@@ -846,9 +776,6 @@ function updateSend() {
   sendBtn.disabled = !inputEl.value.trim() || !llm || generating;
 }
 
-// ============================================================
-//  HELPERS
-// ============================================================
 function esc(str) {
   const div = document.createElement('div');
   div.textContent = str;
@@ -857,12 +784,9 @@ function esc(str) {
 
 function fmtMsg(text) {
   let s = esc(text);
-  // Code blocks
   s = s.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
   s = s.replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
-  // Inline code
   s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
-  // Bold
   s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   return s;
 }
@@ -874,30 +798,23 @@ function fmtTime(ts) {
   });
 }
 
-// ============================================================
-//  BOOT
-// ============================================================
 async function boot() {
-  // WebGPU check
   if (!(await gpuOk())) {
     noGpu.classList.add('show');
     setupEl.style.display = 'none';
     return;
   }
 
-  // Request persistent storage — critical on mobile to prevent OS eviction
   if (navigator.storage && navigator.storage.persist) {
     navigator.storage.persist().catch(() => {});
   }
 
-  // Load chat history
   loadChats();
   renderSB();
   renderMsgs();
   hdrTitle.textContent = cur()?.name || 'New Chat';
   updateCtx();
 
-  // Check for a fully-cached model (meta.complete === true)
   try {
     const meta = await dbGetMeta();
     if (meta && meta.complete) {
@@ -910,7 +827,6 @@ async function boot() {
     console.warn('Cache check failed:', e);
   }
 
-  // No cached model — show alternative download options + auto-download
   sStatus.textContent = 'Preparing to download model...';
   if (altBtns) altBtns.style.display = '';
   try {
@@ -919,11 +835,11 @@ async function boot() {
     const meta = await dbGetMeta();
     await initLLM(meta);
   } catch (err) {
+    if (err.message === 'Download aborted') return;
     await releaseWakeLock();
     sStatus.textContent = 'Download failed';
     sError.textContent = err.message;
     sBar.style.width = '0%';
-    // Keep alternative buttons visible as fallback
   }
 }
 
