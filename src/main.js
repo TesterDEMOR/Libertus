@@ -25,7 +25,7 @@ const META_KEY    = 'model-meta';
 const CHUNK_SIZE  = 64 * 1024 * 1024;  // 64 MB — keeps peak RAM ~128 MB during download
 
 const MAX_TOKENS  = 1024;
-const CTX_PAIRS   = 8;
+const CTX_PAIRS   = 20;
 const STORAGE_KEY = 'libertus-chats';
 const ACTIVE_KEY  = 'libertus-active';
 
@@ -35,10 +35,11 @@ const SYSTEM_PROMPT = `Ты Libertus — милый, весёлый и слег�
 Очень короткие ответы + смайлы/мемы/шутки.
 Задачи типа «суммируй длинный текст», «напиши статью», «переведи 5000 слов», «реши сложную мат. задачу» → нежно отказывайся:
 «я твой друг, а не раб 🥺 давай лучше мемчик или подкол?» или «ооо нет, это уже работа для больших моделей, я пасс 😘»
+Если что-то забыл из разговора, говори: «Ой моя дурная башка, не могу же я все помнить)»
 Максимум веселья и дружеского вайба.`;
 
 // App version for service worker cache invalidation
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.3.0';
 
 // ============================================================
 //  STATE
@@ -307,46 +308,101 @@ async function downloadModel() {
   // Keep screen awake during download (mobile)
   await requestWakeLock();
 
-  const resp = await fetch(MODEL_URL);
-  if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+  const MAX_RETRIES = 100;   // generous for flaky mobile connections
+  const BASE_DELAY  = 2000;  // 2s initial retry delay
 
-  const total = parseInt(resp.headers.get('Content-Length') || '0', 10);
-  const reader = resp.body.getReader();
-
-  let received = 0;
-  let chunkIndex = 0;
-  let buffer = new Uint8Array(CHUNK_SIZE);
+  let received    = 0;
+  let total       = 0;
+  let chunkIndex  = 0;
+  let buffer      = new Uint8Array(CHUNK_SIZE);
   let bufferOffset = 0;
+  let retries     = 0;
 
+  // Outer loop: each iteration is one fetch attempt (initial or resume)
   while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    // Copy network bytes into our fixed-size buffer, flushing when full
-    let srcOffset = 0;
-    while (srcOffset < value.length) {
-      const space = CHUNK_SIZE - bufferOffset;
-      const toCopy = Math.min(space, value.length - srcOffset);
-      buffer.set(value.subarray(srcOffset, srcOffset + toCopy), bufferOffset);
-      bufferOffset += toCopy;
-      srcOffset += toCopy;
-
-      if (bufferOffset === CHUNK_SIZE) {
-        await dbPutChunk(chunkIndex, buffer);
-        chunkIndex++;
-        buffer = new Uint8Array(CHUNK_SIZE);
-        bufferOffset = 0;
+    try {
+      const headers = {};
+      if (received > 0) {
+        headers['Range'] = `bytes=${received}-`;
+        sStatus.textContent = 'Resuming download...';
+        sError.textContent = '';
       }
-    }
 
-    received += value.length;
-    if (total > 0) {
-      const pct = (received / total * 100).toFixed(1);
-      sBar.style.width = pct + '%';
-      sStatus.textContent = `Downloading... ${pct}%`;
-      sDetail.textContent = `${(received / 1e9).toFixed(2)} / ${(total / 1e9).toFixed(2)} GB`;
-    } else {
-      sStatus.textContent = `Downloading... ${(received / 1e6).toFixed(0)} MB`;
+      const resp = await fetch(MODEL_URL, { headers });
+
+      if (received === 0) {
+        // First request — get total size
+        if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+        total = parseInt(resp.headers.get('Content-Length') || '0', 10);
+      } else {
+        // Resume request
+        if (resp.status === 206) {
+          // Partial content — server supports Range, continuing
+        } else if (resp.status === 200) {
+          // Server doesn't support Range — restart from scratch
+          received = 0;
+          chunkIndex = 0;
+          buffer = new Uint8Array(CHUNK_SIZE);
+          bufferOffset = 0;
+          total = parseInt(resp.headers.get('Content-Length') || '0', 10);
+        } else {
+          throw new Error(`Resume failed: HTTP ${resp.status}`);
+        }
+      }
+
+      const reader = resp.body.getReader();
+
+      // Inner loop: read stream chunks
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        // Copy network bytes into our fixed-size buffer, flushing when full
+        let srcOffset = 0;
+        while (srcOffset < value.length) {
+          const space = CHUNK_SIZE - bufferOffset;
+          const toCopy = Math.min(space, value.length - srcOffset);
+          buffer.set(value.subarray(srcOffset, srcOffset + toCopy), bufferOffset);
+          bufferOffset += toCopy;
+          srcOffset += toCopy;
+
+          if (bufferOffset === CHUNK_SIZE) {
+            await dbPutChunk(chunkIndex, buffer);
+            chunkIndex++;
+            buffer = new Uint8Array(CHUNK_SIZE);
+            bufferOffset = 0;
+          }
+        }
+
+        received += value.length;
+        retries = 0;  // reset retries on successful read
+
+        if (total > 0) {
+          const pct = (received / total * 100).toFixed(1);
+          sBar.style.width = pct + '%';
+          sStatus.textContent = `Downloading... ${pct}%`;
+          sDetail.textContent = `${(received / 1e9).toFixed(2)} / ${(total / 1e9).toFixed(2)} GB`;
+        } else {
+          sStatus.textContent = `Downloading... ${(received / 1e6).toFixed(0)} MB`;
+        }
+      }
+
+      // Stream ended normally — download complete
+      break;
+
+    } catch (err) {
+      retries++;
+      if (retries >= MAX_RETRIES) {
+        throw new Error(`Download failed after ${MAX_RETRIES} retries: ${err.message}`);
+      }
+
+      const delay = Math.min(BASE_DELAY * Math.pow(1.5, retries - 1), 30000);
+      const pct = total > 0 ? ` (${(received / total * 100).toFixed(1)}%)` : '';
+      sStatus.textContent = `Connection lost${pct}. Retry ${retries}/${MAX_RETRIES}...`;
+      sError.textContent = err.message;
+      sDetail.textContent = `Resuming in ${Math.ceil(delay / 1000)}s...`;
+
+      await new Promise(r => setTimeout(r, delay));
     }
   }
 
