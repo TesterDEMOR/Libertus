@@ -1,4 +1,4 @@
-const APP_VERSION = '1.5.0';
+const APP_VERSION = '1.5.3';
 const CACHE_NAME = `libertus-v${APP_VERSION}`;
 
 const PRECACHE = [
