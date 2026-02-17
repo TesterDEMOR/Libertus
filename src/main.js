@@ -26,7 +26,7 @@ const SYSTEM_PROMPT = `Ты Libertus.
 Если что-то забыл — честно скажи "Ой, вылетело из головы".
 help me`;
 
-const APP_VERSION = '1.5.3';
+const APP_VERSION = '1.5.4';
 
 let llm = null;
 let generating = false;
@@ -805,6 +805,28 @@ function fmtTime(ts) {
 }
 
 async function boot() {
+  const ua = navigator.userAgent;
+  const isIOS = /iPhone|iPad|iPod/i.test(ua);
+  const isSafari = /^((?!chrome|android).)*safari/i.test(ua);
+  const isMac = /Macintosh/i.test(ua);
+
+  if (isIOS) {
+    $('uos-title').textContent = "iOS Not Supported";
+    $('uos-text').textContent = "iPhones are not supported due to Apple's harsh browser restrictions. It's not my fault!";
+    $('uos-joke').textContent = "Switch to Android, there are fewer restrictions :)";
+    $('unsupported-os').classList.add('show');
+    setupEl.style.display = 'none';
+    return;
+  }
+
+  if (isMac && isSafari) {
+    $('uos-title').textContent = "Safari Not Supported";
+    $('uos-text').textContent = "Please install Google Chrome to run Libertus on macOS.";
+    $('unsupported-os').classList.add('show');
+    setupEl.style.display = 'none';
+    return;
+  }
+
   if (!(await gpuOk())) {
     noGpu.classList.add('show');
     setupEl.style.display = 'none';

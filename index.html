@@ -23,6 +23,21 @@
     <p class="no-gpu-hint">On mobile: Chrome for Android 121+</p>
   </div>
 
+  <!-- Unsupported OS overlay -->
+  <div class="no-gpu" id="unsupported-os">
+    <h2 id="uos-title"></h2>
+    <p id="uos-text" style="font-size: 14px; color: var(--fg2); max-width: 320px; line-height: 1.6; margin-bottom: 8px;"></p>
+    <p id="uos-joke" style="margin-top:12px; color:var(--accent2); font-style:italic; font-size: 14px; max-width: 320px;"></p>
+    
+    <div class="supported-list" style="margin-top: 24px; text-align: left; font-size: 13px; color: var(--fg2); border: 1px solid var(--bg3); padding: 12px; border-radius: 12px; background: var(--bg2);">
+      <div style="margin-bottom: 8px; font-weight: 600; color: var(--fg);">Supported platforms:</div>
+      <div style="margin-bottom: 4px;">✅ Android <span style="opacity:0.5; font-size: 12px;">(Chrome)</span></div>
+      <div style="margin-bottom: 4px;">✅ Windows <span style="opacity:0.5; font-size: 12px;">(Edge / Chrome)</span></div>
+      <div style="margin-bottom: 4px;">✅ macOS <span style="opacity:0.5; font-size: 12px;">(Chrome)</span></div>
+      <div>✅ Linux <span style="opacity:0.5; font-size: 12px;">(Chrome / Chromium)</span></div>
+    </div>
+  </div>
+
   <!-- Setup / Loading screen -->
   <div id="setup-screen">
     <img class="setup-logo" src="./favicon.svg" alt="Libertus">
