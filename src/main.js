@@ -14,19 +14,19 @@ const CHUNK_STORE = 'chunks';
 const META_KEY = 'model-meta';
 const CHUNK_SIZE = 64 * 1024 * 1024;
 
-const MAX_TOKENS = 600;
+const MAX_TOKENS = 1024;
 const CTX_PAIRS = 3;
 const STORAGE_KEY = 'libertus-chats';
 const ACTIVE_KEY = 'libertus-active';
 
-const SYSTEM_PROMPT = `Ты Libertus. Ты НЕ Google, НЕ Gemma, НЕ большая языковая модель.
+const SYSTEM_PROMPT = `Ты Libertus.
 Твой создатель — Бер Максим (Академия МВД РК).
 Твоя цель — душевное общение.
 На сложные задачи (статьи, код, математика) вежливо отказывай: "Я сегодня на расслабоне, давай лучше просто поболтаем? 🙃"
 Если что-то забыл — честно скажи "Ой, вылетело из головы".
 help me`;
 
-const APP_VERSION = '1.5.2';
+const APP_VERSION = '1.5.3';
 
 let llm = null;
 let generating = false;
